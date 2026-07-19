@@ -8,7 +8,7 @@ import random
 import base64
 
 # ================= 差异化采样网段配置 =================
-# 1. 热门网段（连通率高、拥挤、GFW特征重点扫描区）：每个网段仅抽取 2 个
+# 1. 热门网段（连通率高、拥挤、GFW特征重点扫描区）：每个网段仅抽取 10 个
 warp_cidr_hot = [
     '162.159.192.0/24',
     '162.159.193.0/24',
@@ -16,7 +16,7 @@ warp_cidr_hot = [
     '162.159.204.0/24'
 ]
 
-# 2. 冷门网段（连通率低、空闲、有CDN网页流量作为天然保护伞）：每个网段深度抽取 5 个以寻找隐蔽节点
+# 2. 冷门网段（连通率低、空闲、有CDN网页流量作为天然保护伞）：每个网段深度抽取 30 个以寻找隐蔽节点
 warp_cidr_cold = [
     '188.114.96.0/24',
     '188.114.97.0/24',
@@ -48,14 +48,13 @@ def sample_cidr_ips(cidr_list: list[str], ips_per_cidr: int) -> list:
 
 def create_ips():
     """
-    [方案D-PRO-差异化采样] 
-    1. 热门网段连通率极高，每个网段只需随机抽取 2 个即可（共 8 个），节省测试负荷。
-    2. 冷门网段属于“大海捞针”，每个网段深度抽取 5 个（共 20 个），极大地提高过滤出
-       “Stealth 隐蔽极品节点”的概率。
-    总共生成 28 个高物理层多样性的候选 IP 写入 ip.txt。
+    [方案D-PRO-差异化采样（160 规模放大版）] 
+    1. 热门网段（4个）：每个网段随机抽取 10 个（共 40 个），节省测试负荷。
+    2. 冷门网段（4个）：每个网段深度抽取 30 个（共 120 个，大幅增加大海捞针概率）。
+    总共生成 160 个高物理层多样性的候选 IP 写入 ip.txt。
     """
-    hot_sampled = sample_cidr_ips(warp_cidr_hot, ips_per_cidr=2)
-    cold_sampled = sample_cidr_ips(warp_cidr_cold, ips_per_cidr=5)
+    hot_sampled = sample_cidr_ips(warp_cidr_hot, ips_per_cidr=10)
+    cold_sampled = sample_cidr_ips(warp_cidr_cold, ips_per_cidr=30)
     
     all_sampled_ips = hot_sampled + cold_sampled
 
@@ -93,9 +92,9 @@ subprocess.run(["wget", url, "-O", "warp"])
 os.chmod("warp", 0o755)
 
 print("Scanning ips...")
-# 利用 subprocess 原生的 DEVNULL 重定向，优雅、干净地调用云端的 warp 测速扫描器
+# 【核心修正】：显式传入 "-f", "ip.txt" 参数，强行要求扫描器读取并仅扫描我们生成的 160 个 IP 列表
 process = subprocess.run(
-    ["./warp"],
+    ["./warp", "-f", "ip.txt"],
     stdout=subprocess.DEVNULL,
     stderr=subprocess.DEVNULL,
     shell=False
