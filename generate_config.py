@@ -94,12 +94,12 @@ arch = arch_suffix()
 print("Fetch warp program...")
 url = f"https://gitlab.com/Misaka-blog/warp-script/-/raw/main/files/warp-yxip/warp-linux-{arch}"
 
-# 通过 subprocess 下载 Linux 对应架构的 warp binary
+# 下载对应架构的 warp binary
 subprocess.run(["wget", url, "-O", "warp"])
 os.chmod("warp", 0o755)
 
 print(f"Scanning IPs via absolute path: {ip_txt_path}...")
-# 【核心修正】：使用绝对路径指定 -file 和 -output 选项，完美兼容 Linux 版 warp 扫描器并锁定工作目录
+# 运行 Linux 版 warp 扫描器并锁定绝对路径
 process = subprocess.run(
     ["./warp", "-file", ip_txt_path, "-output", result_path],
     shell=False
@@ -133,16 +133,16 @@ def print_result_diagnostics():
                     if subnet:
                         subnet_counts[subnet] = subnet_counts.get(subnet, 0) + 1
                         
-            print("\n" + "📊" + " [云端扫描诊断报告] " + "="*45)
-            print(f" 本轮扫描出的【可用（连通）Endpoint】总数: {total_successful} 个")
-            print(" 成功可连通节点在 8 个网段中的物理分布统计:")
-            for subnet in sorted(warp_cidr_hot + warp_cidr_cold):
-                count = subnet_counts.get(subnet, 0)
-                status_tag = "[活跃 ✓]" if count > 0 else "[无可用 ✗]"
-                print(f"   - {subnet:<18} : {count:>3} 个可用 {status_tag}")
-            print("=" * 65 + "\n")
-        except Exception as e:
-            print(f"[诊断失败] 解析 result.csv 异常: {e}")
+        print("\n" + "📊" + " [云端扫描诊断报告] " + "="*45)
+        print(f" 本轮扫描出的【可用（连通）Endpoint】总数: {total_successful} 个")
+        print(" 成功可连通节点在 8 个网段中的物理分布统计:")
+        for subnet in sorted(warp_cidr_hot + warp_cidr_cold):
+            count = subnet_counts.get(subnet, 0)
+            status_tag = "[活跃 ✓]" if count > 0 else "[无可用 ✗]"
+            print(f"   - {subnet:<18} : {count:>3} 个可用 {status_tag}")
+        print("=" * 65 + "\n")
+    except Exception as e:
+        print(f"[诊断失败] 解析 result.csv 异常: {e}")
 
 # 运行诊断打印
 print_result_diagnostics()
@@ -159,7 +159,7 @@ def warp_ip() -> str:
 
 configs = warp_ip()
 
-# 【加密核心】：将原本明文的 IP 结果转换成 Base64 乱码，防止防火墙或 GitHub 爬虫提取 IP 特征
+# 将原本明文的 IP 结果转换成 Base64 乱码
 encoded_configs = base64.b64encode(configs.encode('utf-8')).decode('utf-8')
 
 os.makedirs(export_directory, exist_ok=True)
