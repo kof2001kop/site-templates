@@ -1,3 +1,4 @@
+from __future__ import annotations
 import ipaddress
 import platform
 import subprocess
@@ -6,36 +7,59 @@ import datetime
 import random
 import base64
 
-warp_cidr = [
+# ================= 差异化采样网段配置 =================
+# 1. 热门网段（连通率高、拥挤、GFW特征重点扫描区）：每个网段仅抽取 2 个
+warp_cidr_hot = [
     '162.159.192.0/24',
     '162.159.193.0/24',
     '162.159.195.0/24',
-    '162.159.204.0/24',
+    '162.159.204.0/24'
+]
+
+# 2. 冷门网段（连通率低、空闲、有CDN网页流量作为天然保护伞）：每个网段深度抽取 5 个以寻找隐蔽节点
+warp_cidr_cold = [
     '188.114.96.0/24',
     '188.114.97.0/24',
     '188.114.98.0/24',
     '188.114.99.0/24'
 ]
+# ======================================================
 
 script_directory = os.path.dirname(__file__)
 ip_txt_path = os.path.join(script_directory, 'ip.txt')
 result_path = os.path.join(script_directory, 'result.csv')
 export_directory = os.path.join(script_directory, 'export')
 
-def create_ips():
-    ips_per_cidr = 3
-    all_sampled_ips = []
-
-    for cidr in warp_cidr:
+def sample_cidr_ips(cidr_list: list[str], ips_per_cidr: int) -> list:
+    """通用子网IP随机采样辅助函数"""
+    sampled_ips = []
+    for cidr in cidr_list:
         try:
             network = ipaddress.ip_network(cidr, strict=False)
+            # 排除网络地址与广播地址，仅获取可用主机IP列表
             hosts = list(network.hosts())
             if len(hosts) >= ips_per_cidr:
+                # 随机采样，避免产生顺序或连续规律
                 sampled = random.sample(hosts, ips_per_cidr)
-                all_sampled_ips.extend(sampled)
+                sampled_ips.extend(sampled)
         except ValueError as e:
             print(f"Error parsing CIDR {cidr}: {e}")
+    return sampled_ips
 
+def create_ips():
+    """
+    [方案D-PRO-差异化采样] 
+    1. 热门网段连通率极高，每个网段只需随机抽取 2 个即可（共 8 个），节省测试负荷。
+    2. 冷门网段属于“大海捞针”，每个网段深度抽取 5 个（共 20 个），极大地提高过滤出
+       “Stealth 隐蔽极品节点”的概率。
+    总共生成 28 个高物理层多样性的候选 IP 写入 ip.txt。
+    """
+    hot_sampled = sample_cidr_ips(warp_cidr_hot, ips_per_cidr=2)
+    cold_sampled = sample_cidr_ips(warp_cidr_cold, ips_per_cidr=5)
+    
+    all_sampled_ips = hot_sampled + cold_sampled
+
+    # 写入 ip.txt 待扫描
     with open(ip_txt_path, 'w') as file:
         file.write('\n'.join(str(ip) for ip in all_sampled_ips))
 
@@ -46,7 +70,7 @@ else:
     create_ips()
     print('ip.txt File Created Successfully!')
 
-def arch_suffix():
+def arch_suffix() -> str:
     machine = platform.machine().lower()
     if machine.startswith('i386') or machine.startswith('i686'):
         return '386'
@@ -64,11 +88,12 @@ arch = arch_suffix()
 print("Fetch warp program...")
 url = f"https://gitlab.com/Misaka-blog/warp-script/-/raw/main/files/warp-yxip/warp-linux-{arch}"
 
+# 通过 subprocess 下载 Linux 对应架构的 warp binary
 subprocess.run(["wget", url, "-O", "warp"])
 os.chmod("warp", 0o755)
 
 print("Scanning ips...")
-
+# 利用 subprocess 原生的 DEVNULL 重定向，优雅、干净地调用云端的 warp 测速扫描器
 process = subprocess.run(
     ["./warp"],
     stdout=subprocess.DEVNULL,
@@ -81,12 +106,12 @@ if process.returncode != 0:
 else:
     print("Warp executed successfully.")
 
-def warp_ip():
+def warp_ip() -> tuple[str, str]:
     creation_time = os.path.getctime(result_path)
     formatted_time = datetime.datetime.fromtimestamp(creation_time).strftime("%Y-%m-%d %H:%M:%S")
     config_prefixes = ''  
     with open(result_path, 'r') as csv_file:
-        next(csv_file)
+        next(csv_file)  # 跳过首行表头
         for line in csv_file:
             ip = line.split(',')[0]
             config_prefixes += f'{ip}\n'
@@ -94,13 +119,16 @@ def warp_ip():
 
 configs = warp_ip()[0]
 
+# 【加密核心】：将原本明文的 IP 结果转换成 Base64 乱码，防止防火墙或 GitHub 爬虫提取 IP 特征
 encoded_configs = base64.b64encode(configs.encode('utf-8')).decode('utf-8')
 
 os.makedirs(export_directory, exist_ok=True)
+# 伪装输出至普通网页配置文件 manifest.json
 export_file_path = os.path.join(export_directory, 'manifest.json')
 with open(export_file_path, 'w') as op:
     op.write(encoded_configs)
 
+# 清理所有本地残留文件，保证云端执行完后不留下可执行文件或明文结果
 if os.path.exists(ip_txt_path):
     os.remove(ip_txt_path)
 if os.path.exists(result_path):
