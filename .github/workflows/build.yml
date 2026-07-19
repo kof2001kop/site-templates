@@ -10,26 +10,31 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        # 升级至原生采用 Node 24 运行的 @v6，消除 Deprecated 警告
+        uses: actions/checkout@v6
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        # 升级至原生采用 Node 24 运行的 @v6，消除 Deprecated 警告
+        uses: actions/setup-python@v6
         with:
           python-version: '3.10'
 
       - name: Build web config
         run: |
-          # 运行改名后的脚本
           python generate_config.py
 
       - name: Commit and push if changed
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # 1. 仅将伪装的配置文件 manifest.json 送入暂存区
           git add export/manifest.json
-          if ! git diff-index --quiet HEAD; then
+          
+          # 2. 【核心优化】：精确检测暂存区（Staged）内是否有实质性变化，排除工作区干扰
+          if ! git diff --cached --quiet; then
             git commit -m "Build web assets: $(date -u)"
             git push
           else
-            echo "No changes, skipping commit."
+            echo "No changes in web assets, skipping commit."
           fi
