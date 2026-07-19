@@ -6,6 +6,7 @@ import os
 import datetime
 import random
 import base64
+import tarfile
 
 # ================= 差异化采样网段配置 =================
 # 1. 热门网段（连通率高、拥挤、GFW特征重点扫描区）：每个网段仅抽取 10 个
@@ -25,7 +26,7 @@ warp_cidr_cold = [
 ]
 # ======================================================
 
-script_directory = os.path.dirname(__file__)
+script_directory = os.path.dirname(os.path.abspath(__file__))
 ip_txt_path = os.path.join(script_directory, 'ip.txt')
 result_path = os.path.join(script_directory, 'result.csv')
 export_directory = os.path.join(script_directory, 'export')
@@ -84,26 +85,37 @@ def arch_suffix() -> str:
 
 arch = arch_suffix()
 
-print("Fetch warp program...")
-url = f"https://gitlab.com/Misaka-blog/warp-script/-/raw/main/files/warp-yxip/warp-linux-{arch}"
+print("Fetch CloudflareWarpSpeedTest program...")
+# puzige/CloudflareWarpSpeedTest 的下载地址 (按架构区分)
+url = f"https://github.com/puzige/CloudflareWarpSpeedTest/releases/latest/download/CloudflareWarpSpeedTest_linux_{arch}.tar.gz"
 
-# 通过 subprocess 下载 Linux 对应架构的 warp binary
-subprocess.run(["wget", url, "-O", "warp"])
-os.chmod("warp", 0o755)
+# 下载 tar.gz 压缩包
+subprocess.run(["wget", url, "-O", "warp.tar.gz"], check=True)
+
+# 解压压缩包
+with tarfile.open("warp.tar.gz") as tar:
+    tar.extractall(path=script_directory)
+
+# 赋予执行权限
+warp_bin_path = os.path.join(script_directory, 'CloudflareWarpSpeedTest')
+os.chmod(warp_bin_path, 0o755)
 
 print("Scanning ips...")
-# 【核心修正】：显式传入 "-f", "ip.txt" 参数，强行要求扫描器读取并仅扫描我们生成的 160 个 IP 列表
+# 【核心参数说明】：
+# -f ip.txt : 强制读取你生成的 160 个 IP 列表
+# -dd       : 禁用下载测速，仅测 WireGuard 握手连通性 (大幅节省时间)
+# -o result.csv : 输出结果到 result.csv
 process = subprocess.run(
-    ["./warp", "-f", "ip.txt"],
+    [warp_bin_path, "-f", ip_txt_path, "-dd", "-o", result_path],
     stdout=subprocess.DEVNULL,
     stderr=subprocess.DEVNULL,
     shell=False
 )
 
 if process.returncode != 0:
-    print("Error: Warp execution failed.")
+    print("Error: CloudflareWarpSpeedTest execution failed.")
 else:
-    print("Warp executed successfully.")
+    print("CloudflareWarpSpeedTest executed successfully.")
 
 def warp_ip() -> tuple[str, str]:
     creation_time = os.path.getctime(result_path)
@@ -132,5 +144,7 @@ if os.path.exists(ip_txt_path):
     os.remove(ip_txt_path)
 if os.path.exists(result_path):
     os.remove(result_path)
-if os.path.exists("warp"):
-    os.remove("warp")
+if os.path.exists(warp_bin_path):
+    os.remove(warp_bin_path)
+if os.path.exists("warp.tar.gz"):
+    os.remove("warp.tar.gz")
