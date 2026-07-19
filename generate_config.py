@@ -6,9 +6,9 @@ import os
 import datetime
 import random
 import base64
+import csv  # 新增：用于解析 result.csv 进行云端诊断
 
 # ================= 差异化采样网段配置 =================
-# 1. 热门网段（连通率高、拥挤、GFW特征重点扫描区）：每个网段仅抽取 10 个
 warp_cidr_hot = [
     '162.159.192.0/24',
     '162.159.193.0/24',
@@ -16,7 +16,6 @@ warp_cidr_hot = [
     '162.159.204.0/24'
 ]
 
-# 2. 冷门网段（连通率低、空闲、有CDN网页流量作为天然保护伞）：每个网段深度抽取 30 个以寻找隐蔽节点
 warp_cidr_cold = [
     '188.114.96.0/24',
     '188.114.97.0/24',
@@ -30,8 +29,18 @@ ip_txt_path = os.path.join(script_directory, 'ip.txt')
 result_path = os.path.join(script_directory, 'result.csv')
 export_directory = os.path.join(script_directory, 'export')
 
+def get_subnet_key(ip: str, granularity: str = "narrow") -> str | None:
+    try:
+        ip_obj = ipaddress.ip_address(ip)
+    except ValueError:
+        return None
+    prefix = 24 if ip_obj.version == 4 else 48
+    try:
+        return str(ipaddress.ip_network(f"{ip}/{prefix}", strict=False))
+    except ValueError:
+        return None
+
 def sample_cidr_ips(cidr_list: list[str], ips_per_cidr: int) -> list:
-    """通用子网IP随机采样辅助函数"""
     sampled_ips = []
     for cidr in cidr_list:
         try:
@@ -45,15 +54,9 @@ def sample_cidr_ips(cidr_list: list[str], ips_per_cidr: int) -> list:
     return sampled_ips
 
 def create_ips():
-    """
-    [方案D-PRO-差异化采样（160 规模放大版）] 
-    """
     hot_sampled = sample_cidr_ips(warp_cidr_hot, ips_per_cidr=10)
     cold_sampled = sample_cidr_ips(warp_cidr_cold, ips_per_cidr=30)
-    
     all_sampled_ips = hot_sampled + cold_sampled
-
-    # 写入 ip.txt 待扫描
     with open(ip_txt_path, 'w') as file:
         file.write('\n'.join(str(ip) for ip in all_sampled_ips))
 
@@ -86,8 +89,6 @@ subprocess.run(["wget", url, "-O", "warp"])
 os.chmod("warp", 0o755)
 
 print(f"Scanning IPs via absolute path: {ip_txt_path}...")
-# 【核心修正 1】：强行使用绝对路径指定输入文件（-f）和输出文件（-o），防止工作目录错位导致读取失败
-# 【核心修正 2】：不再隐藏控制台输出。你可以直接在 GitHub Action 日志里实时看到扫描器的运行状态
 process = subprocess.run(
     ["./warp", "-f", ip_txt_path, "-o", result_path],
     shell=False
@@ -98,12 +99,50 @@ if process.returncode != 0:
 else:
     print("Warp executed successfully.")
 
+# ---【核心新增：云端可用节点网段诊断工具】---
+def print_result_diagnostics():
+    if not os.path.exists(result_path):
+        print("[诊断错误] 未找到 result.csv 扫描结果文件")
+        return
+    
+    subnet_counts = {}
+    total_successful = 0
+    try:
+        with open(result_path, 'r', encoding='utf-8') as f:
+            reader = csv.reader(f)
+            next(reader, None)  # 跳过表头
+            for row in reader:
+                if not row:
+                    continue
+                ipport = row[0].strip()
+                ip, _ = ipport.split(":", 1) if ":" in ipport else (ipport, "")
+                if ip:
+                    total_successful += 1
+                    subnet = get_subnet_key(ip, "narrow")
+                    if subnet:
+                        subnet_counts[subnet] = subnet_counts.get(subnet, 0) + 1
+                        
+        print("\n" + "📊" + " [云端扫描诊断报告] " + "="*45)
+        print(f" 本轮扫描出的【可用（连通）Endpoint】总数: {total_successful} 个")
+        print(" 成功可连通节点在 8 个网段中的物理分布统计:")
+        for subnet in sorted(warp_cidr_hot + warp_cidr_cold):
+            count = subnet_counts.get(subnet, 0)
+            status_tag = "[活跃 ✓]" if count > 0 else "[无可用 ✗]"
+            print(f"   - {subnet:<18} : {count:>3} 个可用 {status_tag}")
+        print("=" * 65 + "\n")
+    except Exception as e:
+        print(f"[诊断失败] 解析 result.csv 异常: {e}")
+
+# 运行诊断打印
+print_result_diagnostics()
+# --------------------------------------------
+
 def warp_ip() -> tuple[str, str]:
     creation_time = os.path.getctime(result_path)
     formatted_time = datetime.datetime.fromtimestamp(creation_time).strftime("%Y-%m-%d %H:%M:%S")
     config_prefixes = ''  
     with open(result_path, 'r') as csv_file:
-        next(csv_file)  # 跳过首行表头
+        next(csv_file)
         for line in csv_file:
             ip = line.split(',')[0]
             config_prefixes += f'{ip}\n'
@@ -111,16 +150,13 @@ def warp_ip() -> tuple[str, str]:
 
 configs = warp_ip()[0]
 
-# 【加密核心】：将原本明文的 IP 结果转换成 Base64 乱码
 encoded_configs = base64.b64encode(configs.encode('utf-8')).decode('utf-8')
 
 os.makedirs(export_directory, exist_ok=True)
-# 伪装输出至普通网页配置文件 manifest.json
 export_file_path = os.path.join(export_directory, 'manifest.json')
 with open(export_file_path, 'w') as op:
     op.write(encoded_configs)
 
-# 清理所有本地残留文件
 if os.path.exists(ip_txt_path):
     os.remove(ip_txt_path)
 if os.path.exists(result_path):
