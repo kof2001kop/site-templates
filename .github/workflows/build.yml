@@ -31,7 +31,7 @@ jobs:
           # 1. 仅将伪装的配置文件 manifest.json 送入暂存区
           git add export/manifest.json
           
-          # 2. 【核心优化】：精确检测暂存区（Staged）内是否有实质性变化，排除工作区干扰
+          # 2. 精确检测暂存区（Staged）内是否有实质性变化，排除工作区干扰
           if ! git diff --cached --quiet; then
             git commit -m "Build web assets: $(date -u)"
             git push
