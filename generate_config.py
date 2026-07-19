@@ -47,7 +47,7 @@ def sample_cidr_ips(cidr_list: list[str], ips_per_cidr: int) -> list:
             print(f"Error parsing CIDR {cidr}: {e}")
     return sampled_ips
 
-def create_ips():
+def create_ips() -> int:
     """
     [方案D-PRO-差异化采样（160 规模放大版）] 
     1. 热门网段（4个）：每个网段随机抽取 10 个（共 40 个），节省测试负荷。
@@ -62,6 +62,8 @@ def create_ips():
     # 写入 ip.txt 待扫描，如果存在会直接覆盖（包括工具自带的默认 ip.txt）
     with open(ip_txt_path, 'w') as file:
         file.write('\n'.join(str(ip) for ip in all_sampled_ips))
+        
+    return len(all_sampled_ips)
 
 def arch_suffix() -> str:
     machine = platform.machine().lower()
@@ -94,14 +96,14 @@ os.chmod(warp_bin_path, 0o755)
 
 # ================= 2. 后生成 ip.txt 覆盖自带列表 =================
 print('Creating ip.txt File.')
-create_ips()
-print('ip.txt File Created Successfully!')
+ip_count = create_ips()
+print(f'ip.txt File Created Successfully! Total IPs: {ip_count}')
 
 # ================= 3. 执行扫描 =================
 print("Scanning ips...")
-# 【修正】：移除了不存在的 -dd 参数。该工具仅测握手延迟，无下载测速功能。
+# 【核心修正】：增加 -c 参数，严格限制扫描数量为我们生成的数量，防止工具自动补齐内置IP
 process = subprocess.run(
-    [warp_bin_path, "-f", ip_txt_path, "-o", result_path],
+    [warp_bin_path, "-f", ip_txt_path, "-c", str(ip_count), "-o", result_path],
     shell=False
 )
 
