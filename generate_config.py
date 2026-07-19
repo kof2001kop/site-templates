@@ -99,9 +99,9 @@ subprocess.run(["wget", url, "-O", "warp"])
 os.chmod("warp", 0o755)
 
 print(f"Scanning IPs via absolute path: {ip_txt_path}...")
-# 运行 Linux 版 warp 扫描器并锁定绝对路径
+# 【核心修正】：Linux 云端扫描器仅支持短参数 "-f" 指定输入文件，"-o" 指定输出文件 [1]
 process = subprocess.run(
-    ["./warp", "-file", ip_txt_path, "-output", result_path],
+    ["./warp", "-f", ip_txt_path, "-o", result_path],
     shell=False
 )
 
