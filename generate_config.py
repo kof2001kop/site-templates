@@ -99,9 +99,9 @@ print('ip.txt File Created Successfully!')
 
 # ================= 3. 执行扫描 =================
 print("Scanning ips...")
-# 移除 DEVNULL，让工具的输出直接打印到控制台，方便排查问题
+# 【修正】：移除了不存在的 -dd 参数。该工具仅测握手延迟，无下载测速功能。
 process = subprocess.run(
-    [warp_bin_path, "-f", ip_txt_path, "-dd", "-o", result_path],
+    [warp_bin_path, "-f", ip_txt_path, "-o", result_path],
     shell=False
 )
 
