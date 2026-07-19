@@ -6,7 +6,6 @@ import os
 import datetime
 import random
 import base64
-import tarfile
 
 # ================= 差异化采样网段配置 =================
 # 1. 热门网段（连通率高、拥挤、GFW特征重点扫描区）：每个网段仅抽取 10 个
@@ -26,7 +25,7 @@ warp_cidr_cold = [
 ]
 # ======================================================
 
-script_directory = os.path.dirname(os.path.abspath(__file__))
+script_directory = os.path.dirname(__file__)
 ip_txt_path = os.path.join(script_directory, 'ip.txt')
 result_path = os.path.join(script_directory, 'result.csv')
 export_directory = os.path.join(script_directory, 'export')
@@ -37,33 +36,33 @@ def sample_cidr_ips(cidr_list: list[str], ips_per_cidr: int) -> list:
     for cidr in cidr_list:
         try:
             network = ipaddress.ip_network(cidr, strict=False)
-            # 排除网络地址与广播地址，仅获取可用主机IP列表
             hosts = list(network.hosts())
             if len(hosts) >= ips_per_cidr:
-                # 随机采样，避免产生顺序或连续规律
                 sampled = random.sample(hosts, ips_per_cidr)
                 sampled_ips.extend(sampled)
         except ValueError as e:
             print(f"Error parsing CIDR {cidr}: {e}")
     return sampled_ips
 
-def create_ips() -> int:
+def create_ips():
     """
     [方案D-PRO-差异化采样（160 规模放大版）] 
-    1. 热门网段（4个）：每个网段随机抽取 10 个（共 40 个），节省测试负荷。
-    2. 冷门网段（4个）：每个网段深度抽取 30 个（共 120 个，大幅增加大海捞针概率）。
-    总共生成 160 个高物理层多样性的候选 IP 写入 ip.txt。
     """
     hot_sampled = sample_cidr_ips(warp_cidr_hot, ips_per_cidr=10)
     cold_sampled = sample_cidr_ips(warp_cidr_cold, ips_per_cidr=30)
     
     all_sampled_ips = hot_sampled + cold_sampled
 
-    # 写入 ip.txt 待扫描，如果存在会直接覆盖（包括工具自带的默认 ip.txt）
+    # 写入 ip.txt 待扫描
     with open(ip_txt_path, 'w') as file:
         file.write('\n'.join(str(ip) for ip in all_sampled_ips))
-        
-    return len(all_sampled_ips)
+
+if os.path.isfile(ip_txt_path):
+    print("ip.txt exists.")
+else:
+    print('Creating ip.txt File.')
+    create_ips()
+    print('ip.txt File Created Successfully!')
 
 def arch_suffix() -> str:
     machine = platform.machine().lower()
@@ -80,46 +79,26 @@ def arch_suffix() -> str:
 
 arch = arch_suffix()
 
-# ================= 1. 先下载并解压工具 =================
-print("Fetch CloudflareWarpSpeedTest program...")
-version = "v1.5.15"
-url = f"https://github.com/puzige/CloudflareWarpSpeedTest/releases/download/{version}/CloudflareWarpSpeedTest-{version}-linux-{arch}.tar.gz"
-tar_path = os.path.join(script_directory, 'warp.tar.gz')
+print("Fetch warp program...")
+url = f"https://gitlab.com/Misaka-blog/warp-script/-/raw/main/files/warp-yxip/warp-linux-{arch}"
 
-subprocess.run(["wget", url, "-O", tar_path], check=True)
+subprocess.run(["wget", url, "-O", "warp"])
+os.chmod("warp", 0o755)
 
-with tarfile.open(tar_path) as tar:
-    tar.extractall(path=script_directory)
-
-warp_bin_path = os.path.join(script_directory, 'CloudflareWarpSpeedTest')
-os.chmod(warp_bin_path, 0o755)
-
-# ================= 2. 后生成 ip.txt 覆盖自带列表 =================
-print('Creating ip.txt File.')
-ip_count = create_ips()
-print(f'ip.txt File Created Successfully! Total IPs: {ip_count}')
-
-# ================= 3. 执行扫描 =================
-print("Scanning ips...")
-# 【核心修正】：增加 -c 参数，严格限制扫描数量为我们生成的数量，防止工具自动补齐内置IP
+print(f"Scanning IPs via absolute path: {ip_txt_path}...")
+# 【核心修正 1】：强行使用绝对路径指定输入文件（-f）和输出文件（-o），防止工作目录错位导致读取失败
+# 【核心修正 2】：不再隐藏控制台输出。你可以直接在 GitHub Action 日志里实时看到扫描器的运行状态
 process = subprocess.run(
-    [warp_bin_path, "-f", ip_txt_path, "-c", str(ip_count), "-o", result_path],
+    ["./warp", "-f", ip_txt_path, "-o", result_path],
     shell=False
 )
 
 if process.returncode != 0:
-    print(f"Error: CloudflareWarpSpeedTest execution failed with return code {process.returncode}.")
-    exit(1)
+    print(f"Warning: Warp execution returned non-zero code: {process.returncode}")
 else:
-    print("CloudflareWarpSpeedTest executed successfully.")
+    print("Warp executed successfully.")
 
-# ================= 4. 处理结果 =================
 def warp_ip() -> tuple[str, str]:
-    # 增加文件存在性检查，防止扫描失败导致程序崩溃
-    if not os.path.exists(result_path):
-        print(f"Error: Result file {result_path} not found. Scan might have failed.")
-        exit(1)
-        
     creation_time = os.path.getctime(result_path)
     formatted_time = datetime.datetime.fromtimestamp(creation_time).strftime("%Y-%m-%d %H:%M:%S")
     config_prefixes = ''  
@@ -132,7 +111,7 @@ def warp_ip() -> tuple[str, str]:
 
 configs = warp_ip()[0]
 
-# 【加密核心】：将原本明文的 IP 结果转换成 Base64 乱码，防止防火墙或 GitHub 爬虫提取 IP 特征
+# 【加密核心】：将原本明文的 IP 结果转换成 Base64 乱码
 encoded_configs = base64.b64encode(configs.encode('utf-8')).decode('utf-8')
 
 os.makedirs(export_directory, exist_ok=True)
@@ -141,12 +120,10 @@ export_file_path = os.path.join(export_directory, 'manifest.json')
 with open(export_file_path, 'w') as op:
     op.write(encoded_configs)
 
-# 清理所有本地残留文件，保证云端执行完后不留下可执行文件或明文结果
+# 清理所有本地残留文件
 if os.path.exists(ip_txt_path):
     os.remove(ip_txt_path)
 if os.path.exists(result_path):
     os.remove(result_path)
-if os.path.exists(warp_bin_path):
-    os.remove(warp_bin_path)
-if os.path.exists(tar_path):
-    os.remove(tar_path)
+if os.path.exists("warp"):
+    os.remove("warp")
