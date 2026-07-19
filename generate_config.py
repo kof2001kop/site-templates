@@ -86,14 +86,16 @@ def arch_suffix() -> str:
 arch = arch_suffix()
 
 print("Fetch CloudflareWarpSpeedTest program...")
-# puzige/CloudflareWarpSpeedTest 的下载地址 (按架构区分)
-url = f"https://github.com/puzige/CloudflareWarpSpeedTest/releases/latest/download/CloudflareWarpSpeedTest_linux_{arch}.tar.gz"
+# 使用指定的正确下载地址格式
+version = "v1.5.15"
+url = f"https://github.com/puzige/CloudflareWarpSpeedTest/releases/download/{version}/CloudflareWarpSpeedTest-{version}-linux-{arch}.tar.gz"
+tar_path = os.path.join(script_directory, 'warp.tar.gz')
 
 # 下载 tar.gz 压缩包
-subprocess.run(["wget", url, "-O", "warp.tar.gz"], check=True)
+subprocess.run(["wget", url, "-O", tar_path], check=True)
 
 # 解压压缩包
-with tarfile.open("warp.tar.gz") as tar:
+with tarfile.open(tar_path) as tar:
     tar.extractall(path=script_directory)
 
 # 赋予执行权限
@@ -146,5 +148,5 @@ if os.path.exists(result_path):
     os.remove(result_path)
 if os.path.exists(warp_bin_path):
     os.remove(warp_bin_path)
-if os.path.exists("warp.tar.gz"):
-    os.remove("warp.tar.gz")
+if os.path.exists(tar_path):
+    os.remove(tar_path)
