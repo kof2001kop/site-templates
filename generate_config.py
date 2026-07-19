@@ -59,16 +59,9 @@ def create_ips():
     
     all_sampled_ips = hot_sampled + cold_sampled
 
-    # 写入 ip.txt 待扫描
+    # 写入 ip.txt 待扫描，如果存在会直接覆盖（包括工具自带的默认 ip.txt）
     with open(ip_txt_path, 'w') as file:
         file.write('\n'.join(str(ip) for ip in all_sampled_ips))
-
-if os.path.isfile(ip_txt_path):
-    print("ip.txt exists.")
-else:
-    print('Creating ip.txt File.')
-    create_ips()
-    print('ip.txt File Created Successfully!')
 
 def arch_suffix() -> str:
     machine = platform.machine().lower()
@@ -85,41 +78,46 @@ def arch_suffix() -> str:
 
 arch = arch_suffix()
 
+# ================= 1. 先下载并解压工具 =================
 print("Fetch CloudflareWarpSpeedTest program...")
-# 使用指定的正确下载地址格式
 version = "v1.5.15"
 url = f"https://github.com/puzige/CloudflareWarpSpeedTest/releases/download/{version}/CloudflareWarpSpeedTest-{version}-linux-{arch}.tar.gz"
 tar_path = os.path.join(script_directory, 'warp.tar.gz')
 
-# 下载 tar.gz 压缩包
 subprocess.run(["wget", url, "-O", tar_path], check=True)
 
-# 解压压缩包
 with tarfile.open(tar_path) as tar:
     tar.extractall(path=script_directory)
 
-# 赋予执行权限
 warp_bin_path = os.path.join(script_directory, 'CloudflareWarpSpeedTest')
 os.chmod(warp_bin_path, 0o755)
 
+# ================= 2. 后生成 ip.txt 覆盖自带列表 =================
+print('Creating ip.txt File.')
+create_ips()
+print('ip.txt File Created Successfully!')
+
+# ================= 3. 执行扫描 =================
 print("Scanning ips...")
-# 【核心参数说明】：
-# -f ip.txt : 强制读取你生成的 160 个 IP 列表
-# -dd       : 禁用下载测速，仅测 WireGuard 握手连通性 (大幅节省时间)
-# -o result.csv : 输出结果到 result.csv
+# 移除 DEVNULL，让工具的输出直接打印到控制台，方便排查问题
 process = subprocess.run(
     [warp_bin_path, "-f", ip_txt_path, "-dd", "-o", result_path],
-    stdout=subprocess.DEVNULL,
-    stderr=subprocess.DEVNULL,
     shell=False
 )
 
 if process.returncode != 0:
-    print("Error: CloudflareWarpSpeedTest execution failed.")
+    print(f"Error: CloudflareWarpSpeedTest execution failed with return code {process.returncode}.")
+    exit(1)
 else:
     print("CloudflareWarpSpeedTest executed successfully.")
 
+# ================= 4. 处理结果 =================
 def warp_ip() -> tuple[str, str]:
+    # 增加文件存在性检查，防止扫描失败导致程序崩溃
+    if not os.path.exists(result_path):
+        print(f"Error: Result file {result_path} not found. Scan might have failed.")
+        exit(1)
+        
     creation_time = os.path.getctime(result_path)
     formatted_time = datetime.datetime.fromtimestamp(creation_time).strftime("%Y-%m-%d %H:%M:%S")
     config_prefixes = ''  
