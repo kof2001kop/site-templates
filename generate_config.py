@@ -8,23 +8,21 @@ import random
 import base64
 import csv
 
-# ================= 差异化采样网段配置 =================
-# 1. 热门网段（连通率高、拥挤、GFW特征重点扫描区）：每个网段仅抽取 10 个
+# ================= 差异化采样网段配置（与本地 6 网段严格一致版） =================
+# 1. 实际热门网段（连通率极高、高占比）：无需过度扫描，每个网段轻量抽取 10 个做基础采样
 warp_cidr_hot = [
-    '162.159.192.0/24',
-    '162.159.193.0/24',
-    '162.159.195.0/24',
-    '162.159.204.0/24'
-]
-
-# 2. 冷门网段（连通率低、空闲、有CDN网页流量作为天然保护伞）：每个网段深度抽取 30 个以寻找隐蔽节点
-warp_cidr_cold = [
     '188.114.96.0/24',
     '188.114.97.0/24',
     '188.114.98.0/24',
     '188.114.99.0/24'
 ]
-# ======================================================
+
+# 2. 实际稀缺冷门网段（拦截严重、存活极低）：每个网段深度抽取 60 个，极限挖掘生存节点
+warp_cidr_cold = [
+    '162.159.192.0/24',
+    '162.159.195.0/24'
+]
+# ======================================================================
 
 script_directory = os.path.dirname(os.path.abspath(__file__))
 ip_txt_path = os.path.join(script_directory, 'ip.txt')
@@ -61,7 +59,7 @@ def create_ips():
     [方案D-PRO-差异化采样（160 规模放大版）] 
     """
     hot_sampled = sample_cidr_ips(warp_cidr_hot, ips_per_cidr=10)
-    cold_sampled = sample_cidr_ips(warp_cidr_cold, ips_per_cidr=30)
+    cold_sampled = sample_cidr_ips(warp_cidr_cold, ips_per_cidr=60)
     
     all_sampled_ips = hot_sampled + cold_sampled
 
@@ -99,7 +97,6 @@ subprocess.run(["wget", url, "-O", "warp"])
 os.chmod("warp", 0o755)
 
 print(f"Scanning IPs via absolute path: {ip_txt_path}...")
-# 【核心修正】：Linux 云端扫描器仅支持短参数 "-f" 指定输入文件，"-o" 指定输出文件 [1]
 process = subprocess.run(
     ["./warp", "-f", ip_txt_path, "-o", result_path],
     shell=False
@@ -135,7 +132,7 @@ def print_result_diagnostics():
                         
         print("\n" + "📊" + " [云端扫描诊断报告] " + "="*45)
         print(f" 本轮扫描出的【可用（连通）Endpoint】总数: {total_successful} 个")
-        print(" 成功可连通节点在 8 个网段中的物理分布统计:")
+        print(f" 成功可连通节点在 {len(warp_cidr_hot) + len(warp_cidr_cold)} 个网段中的物理分布统计:")
         for subnet in sorted(warp_cidr_hot + warp_cidr_cold):
             count = subnet_counts.get(subnet, 0)
             status_tag = "[活跃 ✓]" if count > 0 else "[无可用 ✗]"
